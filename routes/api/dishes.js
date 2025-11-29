@@ -1,117 +1,217 @@
+// routes/api/dishes.js
+
 const express = require("express");
-const { Dishes } = require("../../config"); // <- remove db
+const { Dishes } = require("../../config");
+const multer = require("multer");
+const path = require("path");
+
 const routes = express.Router();
 
-// GET /api/dishes
+// ------------------------------------------------------
+// MULTER SETUP  (for optional image upload)
+// ------------------------------------------------------
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    // images folder in project root
+    cb(null, "images");
+  },
+  filename: function (req, file, cb) {
+    // keep original file name so it matches what you use in Firestore
+    cb(null, file.originalname);
+  },
+});
+
+const upload = multer({ storage });
+
+// ------------------------------------------------------
+// GET ALL DISHES
+// ------------------------------------------------------
 routes.get("/", async (req, res) => {
   try {
     const snapshot = await Dishes.get();
-    const list = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-    res.status(200).send(list);
+    const list = snapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    }));
+
+    return res.status(200).send(list);
   } catch (err) {
-    console.error("Error fetching dishes:", err);
-    res.status(500).send({
+    console.error("Get dishes error:", err);
+    return res.status(500).send({
       success: false,
-      message: "Error fetching dishes",
+      message: "Error getting dishes.",
       error: err.message,
     });
   }
 });
 
-// POST /api/dishes/create
-routes.post("/create", async (req, res) => {
+// ------------------------------------------------------
+// CREATE ONE DISH  (supports image upload OR plain file name)
+// ------------------------------------------------------
+// If you upload an image from Postman / frontend, use field name "file"
+routes.post("/create", upload.single("file"), async (req, res) => {
   try {
-    const data = req.body;
-    const docRef = await Dishes.add(data);
+    const { name, description, price, dietary_flags, category } = req.body;
 
-    res.status(201).send({
-      success: true,
-      id: docRef.id,
-      msg: "Dish added successfully.",
-    });
-  } catch (err) {
-    console.error("Error creating dish:", err);
-    res.status(500).send({
-      success: false,
-      message: "Error creating dish",
-      error: err.message,
-    });
-  }
-});
-
-// POST /api/dishes/bulk
-routes.post("/bulk", async (req, res) => {
-  try {
-    const dishes = req.body; // expects an array
-
-    if (!Array.isArray(dishes)) {
+    if (!name || !category || price == null) {
       return res.status(400).send({
         success: false,
-        message: "Expected an array of dishes",
+        message: "name, category and price are required",
       });
     }
 
-    const createdIds = [];
+    // If an image was uploaded, use its filename.
+    // Otherwise, allow a plain text "file" field in the JSON body.
+    const fileName = req.file
+      ? req.file.filename
+      : req.body.file
+      ? req.body.file
+      : "";
 
-    for (const dish of dishes) {
-      const docRef = await Dishes.add(dish);
-      createdIds.push(docRef.id);
+    const payload = {
+      name,
+      description: description || "",
+      category,
+      price: Number(price),
+      dietary_flags: dietary_flags || "",
+      file: fileName,
+    };
+
+    const docRef = await Dishes.add(payload);
+
+    return res.status(201).send({
+      success: true,
+      id: docRef.id,
+      data: payload,
+      message: "Dish created successfully",
+    });
+  } catch (err) {
+    console.error("Create dish error:", err);
+    return res.status(500).send({
+      success: false,
+      message: "Error creating dish.",
+      error: err.message,
+    });
+  }
+});
+
+// ------------------------------------------------------
+// BULK CREATE DISHES  (for seeding via Postman)
+// ------------------------------------------------------
+// POST /api/dishes/bulk
+// Body example:
+// {
+//   "dishes": [
+//     { "name": "Veggie Burger", "category": "mains", "price": 18, "file": "veggieburger.jpg" },
+//     { "name": "Cappuccino", "category": "drinks", "price": 5, "file": "cappuccino.jpg" }
+//   ]
+// }
+routes.post("/bulk", async (req, res) => {
+  try {
+    const { dishes } = req.body;
+
+    if (!Array.isArray(dishes) || dishes.length === 0) {
+      return res.status(400).send({
+        success: false,
+        message: "Body must contain a non-empty 'dishes' array",
+      });
     }
 
-    res.status(201).send({
+    const created = [];
+
+    for (const d of dishes) {
+      if (!d.name || !d.category || d.price == null) {
+        // skip invalid entries
+        continue;
+      }
+
+      const payload = {
+        name: d.name,
+        category: d.category,
+        description: d.description || "",
+        price: Number(d.price),
+        dietary_flags: d.dietary_flags || "",
+        file: d.file || "",
+      };
+
+      const docRef = await Dishes.add(payload);
+      created.push({ id: docRef.id, ...payload });
+    }
+
+    return res.status(201).send({
       success: true,
-      count: createdIds.length,
-      ids: createdIds,
-      message: "Dishes added successfully",
+      count: created.length,
+      dishes: created,
+      message: "Bulk dishes created successfully",
     });
   } catch (err) {
-    console.error("Bulk insert error:", err);
-    res.status(500).send({
+    console.error("Bulk dishes error:", err);
+    return res.status(500).send({
       success: false,
-      message: "Error adding bulk dishes",
+      message: "Error creating dishes in bulk.",
       error: err.message,
     });
   }
 });
 
-
-// PUT /api/dishes/update/:dish_id
-routes.put("/update/:dish_id", async (req, res) => {
+// ------------------------------------------------------
+// UPDATE DISH
+// ------------------------------------------------------
+// supports optional new image upload
+routes.put("/update/:dish_id", upload.single("file"), async (req, res) => {
   try {
     const id = req.params.dish_id;
-    delete req.body.id;
 
-    await Dishes.doc(id).update(req.body);
+    const { name, description, price, dietary_flags, category } = req.body;
 
-    res.status(200).send({
+    const updateData = {};
+
+    if (name) updateData.name = name;
+    if (description) updateData.description = description;
+    if (category) updateData.category = category;
+    if (price != null) updateData.price = Number(price);
+    if (dietary_flags) updateData.dietary_flags = dietary_flags;
+
+    if (req.file) {
+      updateData.file = req.file.filename;
+    } else if (req.body.file) {
+      updateData.file = req.body.file;
+    }
+
+    await Dishes.doc(id).update(updateData);
+
+    return res.status(200).send({
       success: true,
-      msg: "Dish updated successfully.",
+      message: "Dish updated successfully",
     });
   } catch (err) {
-    console.error("Error updating dish:", err);
-    res.status(500).send({
+    console.error("Update dish error:", err);
+    return res.status(500).send({
       success: false,
-      message: "Error updating dish",
+      message: "Error updating dish.",
       error: err.message,
     });
   }
 });
 
-// DELETE /api/dishes/delete/:dish_id
+// ------------------------------------------------------
+// DELETE DISH
+// ------------------------------------------------------
 routes.delete("/delete/:dish_id", async (req, res) => {
   try {
     const id = req.params.dish_id;
+
     await Dishes.doc(id).delete();
 
-    res.status(200).send({
+    return res.status(200).send({
       success: true,
-      msg: "Dish deleted successfully.",
+      message: "Dish deleted successfully",
     });
   } catch (err) {
-    console.error("Error deleting dish:", err);
-    res.status(500).send({
+    console.error("Delete dish error:", err);
+    return res.status(500).send({
       success: false,
-      message: "Error deleting dish",
+      message: "Error deleting dish.",
       error: err.message,
     });
   }
