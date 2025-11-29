@@ -1,0 +1,12 @@
+BACKEND REACT-NATIVE API/SERVER INSTALLATION
+Unzip the project in your user folder on your PC
+Open the Project folder in Visual Studio Code 
+run following commands from BACKEND REACT-NATIVE API/SERVER project folder
+//install all the packages
+npm install
+//will install  react-native-eject required to build node_modules folder
+npm install react-native-eject
+//will build node_modules folder 
+react-native eject 
+//will start the API BACKEND SERVER ON LOCAL COMPUTER
+npm start
