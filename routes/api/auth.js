@@ -5,17 +5,28 @@ const routes = express.Router();
 // LOGIN
 routes.post("/login", async (req, res) => {
   try {
+    // Log what we receive
+    console.log("REQ BODY:", req.body);
+
     const result = await User.get();
     const list = result.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
 
+    // Log what we have in Firestore
+    console.log("USERS FROM FIRESTORE:", list);
+
+    const email = (req.body.email || "").trim().toLowerCase();
+    const password = (req.body.password || "").trim();
+
     const user = list.find(
-      (x) => x.email === req.body.email && x.password === req.body.password
+      (x) =>
+        (x.email || "").trim().toLowerCase() === email &&
+        (x.password || "").trim() === password
     );
 
     if (user) {
       return res.send({
         success: true,
-        data: user, // includes user_type if it exists in Firestore
+        data: user,
         message: "User logged in successfully.",
       });
     } else {
@@ -43,7 +54,7 @@ routes.post("/register", async (req, res) => {
       lastName,
       email,
       password,
-      user_type, // may be undefined
+      user_type, // optional
     } = req.body;
 
     const newUser = {
@@ -51,7 +62,6 @@ routes.post("/register", async (req, res) => {
       lastName,
       email,
       password,
-      // default to 'staff' if not provided
       user_type: user_type || "staff",
     };
 
@@ -60,7 +70,7 @@ routes.post("/register", async (req, res) => {
     return res.send({
       success: true,
       id: added.id,
-      data: newUser, // added user_type
+      data: newUser,
       message: "User registered successfully.",
     });
   } catch (err) {
